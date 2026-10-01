@@ -176,8 +176,8 @@
     }
 
     .toggle-flip-btn {
-      background-color: #4a5568;
-      border: 1px dashed #718096;
+      background-color: #ef233c; /* 預設啟用為亮紅色 */
+      border: 1px dashed #ff758f;
       color: #edf2f4;
       padding: 8px;
       border-radius: 6px;
@@ -188,9 +188,10 @@
       justify-content: center;
       gap: 6px;
       transition: all 0.2s;
+      font-weight: 500;
     }
     .toggle-flip-btn:hover {
-      background-color: #718096;
+      opacity: 0.9;
     }
 
     .upload-box {
@@ -267,8 +268,8 @@
       </div>
       <input type="range" id="offset-slider" min="-25" max="30" value="0" step="1">
 
-      <!-- 一鍵上下翻轉切換鍵 -->
-      <button class="toggle-flip-btn" id="flip-btn">🔄 上下垂直翻轉衣服</button>
+      <!-- 一鍵上下翻轉切換鍵 (預設已啟用) -->
+      <button class="toggle-flip-btn" id="flip-btn">🔄 上下垂直翻轉衣服 (已啟用)</button>
     </div>
 
     <div class="upload-box">
@@ -302,7 +303,9 @@
     let currentOutfitIdx = 0;
     let outfits = [];
     let collarOffsetPercent = 0.0;
-    let isFlippedY = false; // 上下翻轉開關
+    
+    // 【重點修改】：預設設定為 true，開機即翻轉
+    let isFlippedY = true;
 
     offsetSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
@@ -313,6 +316,8 @@
     flipBtn.addEventListener('click', () => {
       isFlippedY = !isFlippedY;
       flipBtn.style.backgroundColor = isFlippedY ? "#ef233c" : "#4a5568";
+      flipBtn.style.borderColor = isFlippedY ? "#ff758f" : "#718096";
+      flipBtn.innerText = isFlippedY ? "🔄 上下垂直翻轉衣服 (已啟用)" : "🔄 上下垂直翻轉衣服 (未啟用)";
     });
 
     // ==========================================
@@ -350,7 +355,7 @@
     }
 
     // ==========================================
-    // 預設示範衣服 (領口朝上、下擺朝下)
+    // 預設示範衣服
     // ==========================================
     function createDemoClothing(type) {
       const cvs = document.createElement('canvas');
@@ -537,7 +542,7 @@
     }
 
     // ==========================================
-    // 姿態繪製迴圈 (修正上下翻轉與人臉遮擋)
+    // 姿態繪製迴圈 (預設垂直翻轉繪製)
     // ==========================================
     function onResults(results) {
       if (loadingMask.style.display !== 'none') {
@@ -552,28 +557,25 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, w, h);
 
-      // 在 Canvas 內部水平鏡像翻轉（宛如鏡子）
+      // 水平鏡像
       canvasCtx.translate(w, 0);
       canvasCtx.scale(-1, 1);
 
-      // 繪製視訊底圖
+      // 繪製背景視訊
       canvasCtx.drawImage(results.image, 0, 0, w, h);
 
       if (results.poseLandmarks) {
         const lm = results.poseLandmarks;
-        const leftShoulder = lm[11];  // 人體左肩
-        const rightShoulder = lm[12]; // 人體右肩
+        const leftShoulder = lm[11];
+        const rightShoulder = lm[12];
 
         if (leftShoulder.visibility > 0.4 && rightShoulder.visibility > 0.4) {
           const pL = { x: leftShoulder.x * w, y: leftShoulder.y * h };
           const pR = { x: rightShoulder.x * w, y: rightShoulder.y * h };
 
-          // 核心修正：固定由「人體左肩」指向「人體右肩」(確保方向永遠向右，杜絕 180 度翻轉)
           const dx = pR.x - pL.x;
           const dy = pR.y - pL.y;
           const shoulderWidth = Math.hypot(dx, dy);
-          
-          // 計算微小傾斜角度
           const angle = Math.atan2(dy, dx);
 
           const targetWidth = shoulderWidth * 2.2;
@@ -587,19 +589,17 @@
             const centerX = (pL.x + pR.x) / 2;
             const centerY = (pL.y + pR.y) / 2;
 
-            // 領口垂直基準點 (透過滑桿即時調節，預設 0% 剛好貼在鎖骨線，不擋臉)
             const collarOffsetY = targetHeight * collarOffsetPercent;
 
             canvasCtx.save();
             canvasCtx.translate(centerX, centerY);
             canvasCtx.rotate(angle);
 
-            // 若啟用手動垂直翻轉
+            // 垂直翻轉：scale(1, -1)
             if (isFlippedY) {
               canvasCtx.scale(1, -1);
             }
 
-            // 繪製衣服：X 軸置中，Y 軸從領口往下畫 (確保下擺朝下，絕不往上遮臉)
             canvasCtx.drawImage(
               currentImg,
               -targetWidth / 2,
@@ -615,7 +615,7 @@
     }
 
     // ==========================================
-    // 初始化 MediaPipe Pose 模型
+    // 初始化模型與攝影機
     // ==========================================
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
