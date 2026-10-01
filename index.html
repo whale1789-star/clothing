@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI 虛擬試衣互動投影系統 (修正版)</title>
+  <title>中山虛擬試衣互動投影系統</title>
   
   <!-- 引入官方 MediaPipe Pose 與 Camera 工具 CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -35,7 +35,6 @@
       justify-content: center;
       align-items: center;
     }
-    /* 移除 CSS scaleX(-1)，改由 Canvas 內部直接鏡像繪製，確保座標系與圖層旋轉完全一致，徹底避免顛倒 */
     canvas {
       width: 100%;
       height: 100%;
@@ -76,7 +75,7 @@
 
     /* 右側操作面板 */
     #sidebar {
-      width: 300px;
+      width: 310px;
       height: 100%;
       background-color: #1e2029;
       border-left: 1px solid #2d303e;
@@ -155,13 +154,14 @@
       color: #fff;
     }
 
+    /* 調整工具區塊 */
     .adjust-box {
       margin-top: 12px;
       padding-top: 12px;
       border-top: 1px solid #2d303e;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
     }
     .adjust-label {
       font-size: 0.85rem;
@@ -173,6 +173,24 @@
       width: 100%;
       accent-color: #3a86ff;
       cursor: pointer;
+    }
+
+    .toggle-flip-btn {
+      background-color: #4a5568;
+      border: 1px dashed #718096;
+      color: #edf2f4;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .toggle-flip-btn:hover {
+      background-color: #718096;
     }
 
     .upload-box {
@@ -244,10 +262,13 @@
 
     <div class="adjust-box">
       <div class="adjust-label">
-        <span>衣服高低微調</span>
+        <span>衣服高低微調 (往下拉防遮臉)</span>
         <span id="offset-val">0%</span>
       </div>
-      <input type="range" id="offset-slider" min="-20" max="20" value="0" step="1">
+      <input type="range" id="offset-slider" min="-25" max="30" value="0" step="1">
+
+      <!-- 一鍵上下翻轉切換鍵 -->
+      <button class="toggle-flip-btn" id="flip-btn">🔄 上下垂直翻轉衣服</button>
     </div>
 
     <div class="upload-box">
@@ -262,8 +283,7 @@
       <div class="tip-text">
         • <b>F11</b>：切換純淨全螢幕投影<br>
         • <b>方向鍵 ← / →</b>：切換衣服<br>
-        • <b>數字鍵 1~9</b>：快速選擇衣服<br>
-        • 若圖檔帶白底/黑底，程式將自動進行邊緣去背處理
+        • <b>數字鍵 1~9</b>：快速選擇衣服
       </div>
     </div>
   </div>
@@ -277,15 +297,22 @@
     const loadingMask = document.getElementById('loading-mask');
     const offsetSlider = document.getElementById('offset-slider');
     const offsetVal = document.getElementById('offset-val');
+    const flipBtn = document.getElementById('flip-btn');
 
     let currentOutfitIdx = 0;
     let outfits = [];
-    let collarOffsetPercent = 0.0; // 0% 讓領口基準貼齊兩肩中心
+    let collarOffsetPercent = 0.0;
+    let isFlippedY = false; // 上下翻轉開關
 
     offsetSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
       collarOffsetPercent = val / 100;
       offsetVal.innerText = `${val}%`;
+    });
+
+    flipBtn.addEventListener('click', () => {
+      isFlippedY = !isFlippedY;
+      flipBtn.style.backgroundColor = isFlippedY ? "#ef233c" : "#4a5568";
     });
 
     // ==========================================
@@ -301,28 +328,17 @@
       const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
       const data = imgData.data;
 
-      // 檢查左上角 (0, 0) 的像素色彩作為背景色參考
       const bgR = data[0], bgG = data[1], bgB = data[2], bgA = data[3];
-      const isWhiteBg = (bgR > 235 && bgG > 235 && bgB > 235);
-      const isBlackBg = (bgR < 25 && bgG < 25 && bgB < 25 && bgA > 200);
+      const isWhiteBg = (bgR > 230 && bgG > 230 && bgB > 230);
+      const isBlackBg = (bgR < 30 && bgG < 30 && bgB < 30 && bgA > 200);
 
-      // 若背景具備明顯純色底且非透明，進行智慧過濾
       if (isWhiteBg || isBlackBg) {
         for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-
-          if (isWhiteBg) {
-            // 純白或接近白色的背景轉為完全透明
-            if (r > 230 && g > 230 && b > 230) {
-              data[i + 3] = 0;
-            }
-          } else if (isBlackBg) {
-            // 純黑或接近黑色的背景轉為完全透明
-            if (r < 25 && g < 25 && b < 25) {
-              data[i + 3] = 0;
-            }
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          if (isWhiteBg && r > 220 && g > 220 && b > 220) {
+            data[i + 3] = 0;
+          } else if (isBlackBg && r < 30 && g < 30 && b < 30) {
+            data[i + 3] = 0;
           }
         }
         ctx.putImageData(imgData, 0, 0);
@@ -334,7 +350,7 @@
     }
 
     // ==========================================
-    // 預設示範衣服 (具備透明通道)
+    // 預設示範衣服 (領口朝上、下擺朝下)
     // ==========================================
     function createDemoClothing(type) {
       const cvs = document.createElement('canvas');
@@ -342,7 +358,6 @@
       cvs.height = 700;
       const ctx = cvs.getContext('2d');
 
-      // 背景預設透明
       if (type === 'jacket') {
         ctx.fillStyle = "#1e3d59";
         ctx.beginPath();
@@ -352,7 +367,7 @@
         ctx.lineTo(120, 300); ctx.lineTo(20, 260);
         ctx.closePath();
         ctx.fill();
-        ctx.clearRect(240, 40, 120, 140); // 挖出領口
+        ctx.clearRect(240, 40, 120, 140);
       } else if (type === 'tshirt') {
         ctx.fillStyle = "#17b890";
         ctx.beginPath();
@@ -362,7 +377,7 @@
         ctx.lineTo(130, 260); ctx.lineTo(40, 220);
         ctx.closePath();
         ctx.fill();
-        ctx.clearRect(250, 35, 100, 45); // 挖出圓領
+        ctx.clearRect(250, 35, 100, 45);
       } else {
         ctx.fillStyle = "#e056fd";
         ctx.beginPath();
@@ -488,7 +503,6 @@
 
           const tempImg = new Image();
           tempImg.onload = () => {
-            // 執行自動透明去背
             const processedImg = processImageTransparency(tempImg);
             outfits.push({ name: cleanName, img: processedImg, isCustom: true });
             currentOutfitIdx = outfits.length - 1;
@@ -523,7 +537,7 @@
     }
 
     // ==========================================
-    // 姿態繪製迴圈 (修正上下顛倒與鏡像對齊)
+    // 姿態繪製迴圈 (修正上下翻轉與人臉遮擋)
     // ==========================================
     function onResults(results) {
       if (loadingMask.style.display !== 'none') {
@@ -538,8 +552,7 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, w, h);
 
-      // 1. 在 Canvas 內部統一執行「水平鏡像」
-      // 這保證了視訊與衣服的旋轉座標系完全吻合，徹底排除外層 CSS 翻轉帶來的上下顛倒問題
+      // 在 Canvas 內部水平鏡像翻轉（宛如鏡子）
       canvasCtx.translate(w, 0);
       canvasCtx.scale(-1, 1);
 
@@ -552,17 +565,15 @@
         const rightShoulder = lm[12]; // 人體右肩
 
         if (leftShoulder.visibility > 0.4 && rightShoulder.visibility > 0.4) {
-          // 原始鏡頭座標 (尚未鏡像)
           const pL = { x: leftShoulder.x * w, y: leftShoulder.y * h };
           const pR = { x: rightShoulder.x * w, y: rightShoulder.y * h };
 
-          // 計算兩肩寬度與傾斜角
-          // 固定由人體右肩指向人體左肩 (由左至右)
-          const dx = pL.x - pR.x;
-          const dy = pL.y - pR.y;
+          // 核心修正：固定由「人體左肩」指向「人體右肩」(確保方向永遠向右，杜絕 180 度翻轉)
+          const dx = pR.x - pL.x;
+          const dy = pR.y - pL.y;
           const shoulderWidth = Math.hypot(dx, dy);
           
-          // 由於在鏡像環境下，角度方向為負 dy/dx
+          // 計算微小傾斜角度
           const angle = Math.atan2(dy, dx);
 
           const targetWidth = shoulderWidth * 2.2;
@@ -576,15 +587,19 @@
             const centerX = (pL.x + pR.x) / 2;
             const centerY = (pL.y + pR.y) / 2;
 
-            // 領口垂直基準點 (透過滑桿即時調節)
+            // 領口垂直基準點 (透過滑桿即時調節，預設 0% 剛好貼在鎖骨線，不擋臉)
             const collarOffsetY = targetHeight * collarOffsetPercent;
 
-            // 貼合衣服
             canvasCtx.save();
             canvasCtx.translate(centerX, centerY);
             canvasCtx.rotate(angle);
 
-            // 繪製衣服：水平居中，頂部領口對齊肩膀中心
+            // 若啟用手動垂直翻轉
+            if (isFlippedY) {
+              canvasCtx.scale(1, -1);
+            }
+
+            // 繪製衣服：X 軸置中，Y 軸從領口往下畫 (確保下擺朝下，絕不往上遮臉)
             canvasCtx.drawImage(
               currentImg,
               -targetWidth / 2,
