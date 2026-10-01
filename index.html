@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>中山虛擬試衣互動投影系統</title>
+  <title>AI 虛擬試衣互動投影系統 (同層圖庫自適應版)</title>
   
   <!-- 引入官方 MediaPipe Pose 與 Camera 工具 CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -88,12 +88,21 @@
     .panel-hidden {
       display: none !important;
     }
+    .header-box {
+      margin-bottom: 12px;
+    }
     h2 {
       font-size: 1.2rem;
-      margin-bottom: 12px;
       color: #f8f9fa;
       font-weight: 600;
     }
+    .status-badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      color: #4ade80;
+      margin-top: 4px;
+    }
+
     .btn-group {
       display: flex;
       flex-direction: column;
@@ -139,20 +148,6 @@
       color: #fff;
       font-weight: bold;
     }
-    .delete-btn {
-      background-color: #4c566a;
-      border: none;
-      color: #d8dee9;
-      padding: 12px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.85rem;
-      transition: background 0.2s;
-    }
-    .delete-btn:hover {
-      background-color: #bf616a;
-      color: #fff;
-    }
 
     /* 調整工具區塊 */
     .adjust-box {
@@ -176,7 +171,7 @@
     }
 
     .toggle-flip-btn {
-      background-color: #ef233c; /* 預設啟用為亮紅色 */
+      background-color: #ef233c; /* 預設翻轉啟用 */
       border: 1px dashed #ff758f;
       color: #edf2f4;
       padding: 8px;
@@ -194,29 +189,20 @@
       opacity: 0.9;
     }
 
-    .upload-box {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #2d303e;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .upload-btn {
-      display: block;
-      width: 100%;
-      text-align: center;
-      background-color: #4361ee;
-      color: #fff;
-      padding: 10px;
+    .reload-btn {
+      background-color: #2b303c;
+      color: #94a3b8;
+      border: 1px solid #475569;
+      padding: 8px;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 0.9rem;
-      font-weight: 500;
-      transition: background 0.2s;
+      font-size: 0.85rem;
+      text-align: center;
+      transition: all 0.2s;
     }
-    .upload-btn:hover {
-      background-color: #3a56d4;
+    .reload-btn:hover {
+      color: #fff;
+      background-color: #334155;
     }
 
     .footer-tools {
@@ -251,14 +237,18 @@
   <div id="stage-container">
     <div id="loading-mask">
       <div class="spinner"></div>
-      <div>正在啟動 AI 骨架偵測模型...</div>
+      <div>正在連線圖庫與 AI 骨架偵測...</div>
     </div>
     <video id="webcam" playsinline></video>
     <canvas id="output-canvas"></canvas>
   </div>
 
   <div id="sidebar">
-    <h2>👗 服裝圖庫清單</h2>
+    <div class="header-box">
+      <h2>👗 服裝圖庫清單</h2>
+      <div class="status-badge" id="repo-status">正在載入同目錄 clothes/...</div>
+    </div>
+
     <div class="btn-group" id="btn-group"></div>
 
     <div class="adjust-box">
@@ -268,15 +258,8 @@
       </div>
       <input type="range" id="offset-slider" min="-25" max="30" value="0" step="1">
 
-      <!-- 一鍵上下翻轉切換鍵 (預設已啟用) -->
       <button class="toggle-flip-btn" id="flip-btn">🔄 上下垂直翻轉衣服 (已啟用)</button>
-    </div>
-
-    <div class="upload-box">
-      <label class="upload-btn">
-        ➕ 上傳去背 PNG 衣服
-        <input type="file" id="cloth-uploader" accept="image/png,image/jpeg,image/webp" multiple style="display: none;">
-      </label>
+      <button class="reload-btn" id="reload-btn">⚡ 重新載入衣服圖庫</button>
     </div>
 
     <div class="footer-tools">
@@ -284,7 +267,8 @@
       <div class="tip-text">
         • <b>F11</b>：切換純淨全螢幕投影<br>
         • <b>方向鍵 ← / →</b>：切換衣服<br>
-        • <b>數字鍵 1~9</b>：快速選擇衣服
+        • <b>數字鍵 1~9</b>：快速選擇衣服<br>
+        • 圖片自動從同目錄 clothes/ 載入
       </div>
     </div>
   </div>
@@ -296,16 +280,15 @@
     const btnGroup = document.getElementById('btn-group');
     const sidebar = document.getElementById('sidebar');
     const loadingMask = document.getElementById('loading-mask');
+    const repoStatus = document.getElementById('repo-status');
     const offsetSlider = document.getElementById('offset-slider');
     const offsetVal = document.getElementById('offset-val');
     const flipBtn = document.getElementById('flip-btn');
 
     let currentOutfitIdx = 0;
     let outfits = [];
-    let collarOffsetPercent = 0.15;
-    
-    // 【重點修改】：預設設定為 true，開機即翻轉
-    let isFlippedY = true;
+    let collarOffsetPercent = 0.0;
+    let isFlippedY = true; // 預設執行垂直翻轉防顛倒
 
     offsetSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
@@ -318,6 +301,11 @@
       flipBtn.style.backgroundColor = isFlippedY ? "#ef233c" : "#4a5568";
       flipBtn.style.borderColor = isFlippedY ? "#ff758f" : "#718096";
       flipBtn.innerText = isFlippedY ? "🔄 上下垂直翻轉衣服 (已啟用)" : "🔄 上下垂直翻轉衣服 (未啟用)";
+    });
+
+    document.getElementById('reload-btn').addEventListener('click', () => {
+      repoStatus.innerText = "重新整理圖庫中...";
+      loadSameDirOutfits();
     });
 
     // ==========================================
@@ -355,16 +343,96 @@
     }
 
     // ==========================================
-    // 預設示範衣服
+    // 自動載入同層目錄下的 clothes/ 資料夾
     // ==========================================
-    function createDemoClothing(type) {
-      const cvs = document.createElement('canvas');
-      cvs.width = 600;
-      cvs.height = 700;
-      const ctx = cvs.getContext('2d');
+    async function loadSameDirOutfits() {
+      outfits = [];
 
-      if (type === 'jacket') {
-        ctx.fillStyle = "#1e3d59";
+      // 檢查是否運行在 GitHub Pages 環境上 (例如: https://username.github.io/repo-name/)
+      const isGitHubPages = window.location.hostname.endsWith('github.io');
+
+      if (isGitHubPages) {
+        // 自動從網址解析出 username 與 repo-name
+        const pathSegments = window.location.pathname.split('/').filter(Boolean);
+        const username = window.location.hostname.split('.')[0];
+        const repo = pathSegments[0] || '';
+
+        if (username && repo) {
+          try {
+            const apiUrl = `https://api.github.com/repos/${username}/${repo}/contents/clothes`;
+            const resp = await fetch(apiUrl);
+            if (resp.ok) {
+              const files = await resp.json();
+              const imageFiles = files.filter(f => f.type === 'file' && /\.(png|webp|jpg|jpeg)$/i.test(f.name));
+
+              for (const file of imageFiles) {
+                // 直接使用同目錄相對路徑載入圖片（與網頁同域，最快且無 CORS 限制）
+                const relativeUrl = `clothes/${file.name}`;
+                const img = await loadImageAsync(relativeUrl);
+                if (img) {
+                  const processed = processImageTransparency(img);
+                  const cleanName = decodeURIComponent(file.name.replace(/\.[^/.]+$/, ""));
+                  outfits.push({ name: cleanName, img: processed });
+                }
+              }
+              repoStatus.innerText = `🟢 已載入 GitHub clothes/ 共 ${outfits.length} 套`;
+            }
+          } catch (e) {
+            console.warn("GitHub API 讀取異常，切換回常用清單偵測", e);
+          }
+        }
+      }
+
+      // 若非 GitHub Pages 或 API 無法使用（例如本機環境），使用常見序號探測法自動載入
+      if (outfits.length === 0) {
+        // 預設嘗試載入的通用檔名清單（若您有特定檔名，也可以直接在此陣列加入）
+        const probeList = [
+          "01.png", "02.png", "03.png", "04.png", "05.png",
+          "1.png", "2.png", "3.png", "4.png", "5.png",
+          "suit.png", "tshirt.png", "dress.png", "jacket.png", "coat.png",
+          "衣服1.png", "衣服2.png", "衣服3.png"
+        ];
+
+        for (const filename of probeList) {
+          const path = `clothes/${filename}`;
+          const img = await loadImageAsync(path);
+          if (img) {
+            const processed = processImageTransparency(img);
+            const cleanName = filename.replace(/\.[^/.]+$/, "");
+            outfits.push({ name: cleanName, img: processed });
+          }
+        }
+
+        if (outfits.length > 0) {
+          repoStatus.innerText = `🟢 成功載入同目錄 clothes/ 共 ${outfits.length} 套`;
+        }
+      }
+
+      // 若真的完全找不到任何圖片，使用內建向量衣服備用
+      if (outfits.length === 0) {
+        repoStatus.innerText = `⚠️ 未偵測到衣服圖檔，啟用示範服裝`;
+        loadDemoClothing();
+      }
+
+      renderButtons();
+    }
+
+    function loadImageAsync(url) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = url;
+      });
+    }
+
+    // 安全備用示範衣服
+    function loadDemoClothing() {
+      function makeDemo(type, color) {
+        const cvs = document.createElement('canvas');
+        cvs.width = 600; cvs.height = 700;
+        const ctx = cvs.getContext('2d');
+        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.moveTo(150, 40); ctx.lineTo(450, 40);
         ctx.lineTo(580, 260); ctx.lineTo(480, 300);
@@ -373,85 +441,13 @@
         ctx.closePath();
         ctx.fill();
         ctx.clearRect(240, 40, 120, 140);
-      } else if (type === 'tshirt') {
-        ctx.fillStyle = "#17b890";
-        ctx.beginPath();
-        ctx.moveTo(160, 40); ctx.lineTo(440, 40);
-        ctx.lineTo(560, 220); ctx.lineTo(470, 260);
-        ctx.lineTo(430, 650); ctx.lineTo(170, 650);
-        ctx.lineTo(130, 260); ctx.lineTo(40, 220);
-        ctx.closePath();
-        ctx.fill();
-        ctx.clearRect(250, 35, 100, 45);
-      } else {
-        ctx.fillStyle = "#e056fd";
-        ctx.beginPath();
-        ctx.moveTo(190, 40); ctx.lineTo(410, 40);
-        ctx.lineTo(460, 220); ctx.lineTo(560, 680);
-        ctx.lineTo(40, 680); ctx.lineTo(140, 220);
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      const img = new Image();
-      img.src = cvs.toDataURL();
-      return img;
-    }
-
-    // ==========================================
-    // 圖庫載入 (支援 LocalStorage 與本機 clothes/)
-    // ==========================================
-    async function loadOutfits() {
-      outfits = [];
-
-      const stored = localStorage.getItem("virtual_fitting_custom_clothes");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          parsed.forEach(item => {
-            const rawImg = new Image();
-            rawImg.onload = () => {
-              const processed = processImageTransparency(rawImg);
-              outfits.push({ name: item.name, img: processed, isCustom: true });
-              renderButtons();
-            };
-            rawImg.src = item.data;
-          });
-        } catch (e) {
-          console.error("讀取快取失敗", e);
-        }
-      }
-
-      const folderFiles = [
-        { name: "預設西裝", path: "clothes/01.png" },
-        { name: "休閒上衣", path: "clothes/02.png" },
-        { name: "特色洋裝", path: "clothes/03.png" }
-      ];
-
-      for (const item of folderFiles) {
-        const loadedImg = await checkImageExists(item.path);
-        if (loadedImg) {
-          const processed = processImageTransparency(loadedImg);
-          outfits.push({ name: item.name, img: processed, isCustom: false });
-        }
-      }
-
-      if (outfits.length === 0) {
-        outfits.push({ name: "示範西裝", img: createDemoClothing('jacket'), isCustom: false });
-        outfits.push({ name: "示範T恤", img: createDemoClothing('tshirt'), isCustom: false });
-        outfits.push({ name: "示範禮服", img: createDemoClothing('dress'), isCustom: false });
-      }
-
-      renderButtons();
-    }
-
-    function checkImageExists(url) {
-      return new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-        img.src = url;
-      });
+        img.src = cvs.toDataURL();
+        return img;
+      }
+      outfits.push({ name: "示範深藍西裝", img: makeDemo('jacket', '#1e3d59') });
+      outfits.push({ name: "示範活力綠T", img: makeDemo('tshirt', '#17b890') });
+      outfits.push({ name: "示範優雅莓粉", img: makeDemo('dress', '#e056fd') });
     }
 
     function renderButtons() {
@@ -466,18 +462,6 @@
         btn.onclick = () => selectOutfit(idx);
         row.appendChild(btn);
 
-        if (item.isCustom) {
-          const delBtn = document.createElement('button');
-          delBtn.className = 'delete-btn';
-          delBtn.innerHTML = '🗑';
-          delBtn.title = '刪除此衣服';
-          delBtn.onclick = (e) => {
-            e.stopPropagation();
-            removeCustomOutfit(item.name);
-          };
-          row.appendChild(delBtn);
-        }
-
         btnGroup.appendChild(row);
       });
     }
@@ -490,59 +474,7 @@
     }
 
     // ==========================================
-    // 上傳檔案處理 (自動去背 + 儲存)
-    // ==========================================
-    document.getElementById('cloth-uploader').addEventListener('change', (e) => {
-      const files = Array.from(e.target.files);
-      let storedList = [];
-      const rawStored = localStorage.getItem("virtual_fitting_custom_clothes");
-      if (rawStored) {
-        try { storedList = JSON.parse(rawStored); } catch(err){}
-      }
-
-      files.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const base64Data = event.target.result;
-          const cleanName = file.name.replace(/\.[^/.]+$/, "");
-
-          const tempImg = new Image();
-          tempImg.onload = () => {
-            const processedImg = processImageTransparency(tempImg);
-            outfits.push({ name: cleanName, img: processedImg, isCustom: true });
-            currentOutfitIdx = outfits.length - 1;
-            renderButtons();
-
-            storedList.push({ name: cleanName, data: base64Data });
-            try {
-              localStorage.setItem("virtual_fitting_custom_clothes", JSON.stringify(storedList));
-            } catch (quotaError) {
-              console.warn("本機儲存已滿，暫存於本次工作階段");
-            }
-          };
-          tempImg.src = base64Data;
-        };
-        reader.readAsDataURL(file);
-      });
-    });
-
-    function removeCustomOutfit(name) {
-      outfits = outfits.filter(o => o.name !== name);
-      currentOutfitIdx = Math.max(0, currentOutfitIdx - 1);
-      
-      const rawStored = localStorage.getItem("virtual_fitting_custom_clothes");
-      if (rawStored) {
-        try {
-          let list = JSON.parse(rawStored);
-          list = list.filter(item => item.name !== name);
-          localStorage.setItem("virtual_fitting_custom_clothes", JSON.stringify(list));
-        } catch(err){}
-      }
-      renderButtons();
-    }
-
-    // ==========================================
-    // 姿態繪製迴圈 (預設垂直翻轉繪製)
+    // 姿態繪製迴圈 (水平鏡像 + 垂直防顛倒翻轉)
     // ==========================================
     function onResults(results) {
       if (loadingMask.style.display !== 'none') {
@@ -557,22 +489,23 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, w, h);
 
-      // 水平鏡像
+      // 水平鏡像翻轉
       canvasCtx.translate(w, 0);
       canvasCtx.scale(-1, 1);
 
-      // 繪製背景視訊
+      // 繪製視訊底圖
       canvasCtx.drawImage(results.image, 0, 0, w, h);
 
       if (results.poseLandmarks) {
         const lm = results.poseLandmarks;
-        const leftShoulder = lm[11];
-        const rightShoulder = lm[12];
+        const leftShoulder = lm[11];  // 人體左肩
+        const rightShoulder = lm[12]; // 人體右肩
 
         if (leftShoulder.visibility > 0.4 && rightShoulder.visibility > 0.4) {
           const pL = { x: leftShoulder.x * w, y: leftShoulder.y * h };
           const pR = { x: rightShoulder.x * w, y: rightShoulder.y * h };
 
+          // 由左肩指向右肩計算水平連線
           const dx = pR.x - pL.x;
           const dy = pR.y - pL.y;
           const shoulderWidth = Math.hypot(dx, dy);
@@ -595,7 +528,7 @@
             canvasCtx.translate(centerX, centerY);
             canvasCtx.rotate(angle);
 
-            // 垂直翻轉：scale(1, -1)
+            // 預設垂直翻轉校正
             if (isFlippedY) {
               canvasCtx.scale(1, -1);
             }
@@ -615,7 +548,7 @@
     }
 
     // ==========================================
-    // 初始化模型與攝影機
+    // 初始化 MediaPipe Pose 模型
     // ==========================================
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -671,7 +604,8 @@
       }
     });
 
-    loadOutfits();
+    // 啟動同目錄圖庫載入
+    loadSameDirOutfits();
   </script>
 </body>
 </html>
