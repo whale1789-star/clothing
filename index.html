@@ -103,7 +103,6 @@
       overflow-y: auto;
       padding-right: 4px;
     }
-    /* 自訂滾動條 */
     .btn-group::-webkit-scrollbar {
       width: 6px;
     }
@@ -156,9 +155,30 @@
       color: #fff;
     }
 
+    /* 調整工具區塊 */
+    .adjust-box {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #2d303e;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .adjust-label {
+      font-size: 0.85rem;
+      color: #d8dee9;
+      display: flex;
+      justify-content: space-between;
+    }
+    input[type=range] {
+      width: 100%;
+      accent-color: #3a86ff;
+      cursor: pointer;
+    }
+
     .upload-box {
-      margin-top: 15px;
-      padding-top: 15px;
+      margin-top: 12px;
+      padding-top: 12px;
       border-top: 1px solid #2d303e;
       display: flex;
       flex-direction: column;
@@ -183,7 +203,7 @@
 
     .footer-tools {
       margin-top: auto;
-      padding-top: 15px;
+      padding-top: 12px;
     }
     .fullscreen-btn {
       width: 100%;
@@ -203,14 +223,14 @@
     .tip-text {
       font-size: 0.8rem;
       color: #8d99ae;
-      margin-top: 10px;
+      margin-top: 8px;
       line-height: 1.4;
     }
   </style>
 </head>
 <body>
 
-  <!-- 左側投影主視訊 -->
+  <!-- 左側投影主舞台 -->
   <div id="stage-container">
     <div id="loading-mask">
       <div class="spinner"></div>
@@ -220,11 +240,21 @@
     <canvas id="output-canvas"></canvas>
   </div>
 
-  <!-- 右側控制面板 -->
+  <!-- 右側操作面板 -->
   <div id="sidebar">
     <h2>👗 服裝圖庫清單</h2>
     <div class="btn-group" id="btn-group"></div>
 
+    <!-- 高度即時微調拉桿 -->
+    <div class="adjust-box">
+      <div class="adjust-label">
+        <span>衣服高低微調</span>
+        <span id="offset-val">3%</span>
+      </div>
+      <input type="range" id="offset-slider" min="-15" max="20" value="3" step="1">
+    </div>
+
+    <!-- 上傳按鈕 -->
     <div class="upload-box">
       <label class="upload-btn">
         ➕ 上傳去背 PNG 衣服
@@ -235,10 +265,9 @@
     <div class="footer-tools">
       <button class="fullscreen-btn" id="fs-btn">🖥️ 全螢幕投影 (F11)</button>
       <div class="tip-text">
-        • <b>F11</b>：切換純淨全螢幕投影模式<br>
-        • <b>方向鍵 ← / →</b>：切換上一件 / 下一件<br>
-        • <b>數字鍵 1~9</b>：快速選擇衣服<br>
-        • 上傳之 PNG 將自動保存在瀏覽器
+        • <b>F11</b>：切換純淨全螢幕投影<br>
+        • <b>方向鍵 ← / →</b>：切換衣服<br>
+        • <b>數字鍵 1~9</b>：快速選擇衣服
       </div>
     </div>
   </div>
@@ -250,12 +279,23 @@
     const btnGroup = document.getElementById('btn-group');
     const sidebar = document.getElementById('sidebar');
     const loadingMask = document.getElementById('loading-mask');
+    const offsetSlider = document.getElementById('offset-slider');
+    const offsetVal = document.getElementById('offset-val');
 
     let currentOutfitIdx = 0;
     let outfits = [];
+    // 預設將領口偏移由 15% 調降至 3%，精準貼合肩膀鎖骨
+    let collarOffsetPercent = 0.03;
+
+    // 滑桿即時調整
+    offsetSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      collarOffsetPercent = val / 100;
+      offsetVal.innerText = `${val}%`;
+    });
 
     // ==========================================
-    // 1. 本地示範服裝生成器 (當無自訂圖檔時備用)
+    // 1. 本地示範服裝生成器 (備用)
     // ==========================================
     function createDemoClothing(type) {
       const cvs = document.createElement('canvas');
@@ -266,29 +306,29 @@
       if (type === 'jacket') {
         ctx.fillStyle = "#1e3d59";
         ctx.beginPath();
-        ctx.moveTo(150, 100); ctx.lineTo(450, 100);
-        ctx.lineTo(580, 320); ctx.lineTo(480, 360);
+        ctx.moveTo(150, 60); ctx.lineTo(450, 60);
+        ctx.lineTo(580, 280); ctx.lineTo(480, 320);
         ctx.lineTo(450, 680); ctx.lineTo(150, 680);
-        ctx.lineTo(120, 360); ctx.lineTo(20, 320);
+        ctx.lineTo(120, 320); ctx.lineTo(20, 280);
         ctx.closePath();
         ctx.fill();
-        ctx.clearRect(240, 100, 120, 150); // V領
+        ctx.clearRect(240, 60, 120, 140); // V領
       } else if (type === 'tshirt') {
         ctx.fillStyle = "#17b890";
         ctx.beginPath();
-        ctx.moveTo(160, 100); ctx.lineTo(440, 100);
-        ctx.lineTo(560, 260); ctx.lineTo(470, 310);
+        ctx.moveTo(160, 60); ctx.lineTo(440, 60);
+        ctx.lineTo(560, 220); ctx.lineTo(470, 270);
         ctx.lineTo(430, 650); ctx.lineTo(170, 650);
-        ctx.lineTo(130, 310); ctx.lineTo(40, 260);
+        ctx.lineTo(130, 270); ctx.lineTo(40, 220);
         ctx.closePath();
         ctx.fill();
-        ctx.clearRect(250, 80, 100, 50); // 圓領
+        ctx.clearRect(250, 50, 100, 45); // 圓領
       } else {
         ctx.fillStyle = "#e056fd";
         ctx.beginPath();
-        ctx.moveTo(190, 100); ctx.lineTo(410, 100);
-        ctx.lineTo(460, 280); ctx.lineTo(560, 680);
-        ctx.lineTo(40, 680); ctx.lineTo(140, 280);
+        ctx.moveTo(190, 60); ctx.lineTo(410, 60);
+        ctx.lineTo(460, 240); ctx.lineTo(560, 680);
+        ctx.lineTo(40, 680); ctx.lineTo(140, 240);
         ctx.closePath();
         ctx.fill();
       }
@@ -304,7 +344,7 @@
     async function loadOutfits() {
       outfits = [];
 
-      // A. 從 LocalStorage 載入先前使用者上傳的衣服
+      // A. 從 LocalStorage 載入自訂快取衣服
       const stored = localStorage.getItem("virtual_fitting_custom_clothes");
       if (stored) {
         try {
@@ -319,7 +359,7 @@
         }
       }
 
-      // B. 預設嘗試載入的本機資料夾檔案清單 (可在此自訂檔名)
+      // B. 預設嘗試載入的本機資料夾檔案清單
       const folderFiles = [
         { name: "預設西裝", path: "clothes/01.png" },
         { name: "休閒上衣", path: "clothes/02.png" },
@@ -333,7 +373,7 @@
         }
       }
 
-      // C. 若無任何快取與實體圖檔，載入向量示範衣服
+      // C. 若無自訂與資料夾圖檔，使用示範服飾
       if (outfits.length === 0) {
         outfits.push({ name: "示範西裝", img: createDemoClothing('jacket'), isCustom: false });
         outfits.push({ name: "示範T恤", img: createDemoClothing('tshirt'), isCustom: false });
@@ -364,11 +404,10 @@
         btn.onclick = () => selectOutfit(idx);
         row.appendChild(btn);
 
-        // 自訂上傳的衣服提供刪除按鈕
         if (item.isCustom) {
           const delBtn = document.createElement('button');
           delBtn.className = 'delete-btn';
-          delBtn.innerHTML = '🗑️️';
+          delBtn.innerHTML = '🗑';
           delBtn.title = '刪除此衣服';
           delBtn.onclick = (e) => {
             e.stopPropagation();
@@ -389,7 +428,7 @@
     }
 
     // ==========================================
-    // 3. 上傳自訂 PNG 並持久化儲存
+    // 3. 上傳 PNG 並儲存
     // ==========================================
     document.getElementById('cloth-uploader').addEventListener('change', (e) => {
       const files = Array.from(e.target.files);
@@ -411,12 +450,11 @@
             currentOutfitIdx = outfits.length - 1;
             renderButtons();
 
-            // 儲存至 LocalStorage
             storedList.push({ name: cleanName, data: base64Data });
             try {
               localStorage.setItem("virtual_fitting_custom_clothes", JSON.stringify(storedList));
             } catch (quotaError) {
-              alert("瀏覽器儲存空間已滿，圖檔暫存於本次工作階段！");
+              console.warn("本機快取已達上限");
             }
           };
           img.src = base64Data;
@@ -441,7 +479,7 @@
     }
 
     // ==========================================
-    // 4. 即時姿態追蹤與繪圖處理
+    // 4. 即時姿勢追蹤與貼衣繪製
     // ==========================================
     function onResults(results) {
       if (loadingMask.style.display !== 'none') {
@@ -456,10 +494,9 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, w, h);
       
-      // 繪製即時視訊底圖
+      // 繪製視訊底圖
       canvasCtx.drawImage(results.image, 0, 0, w, h);
 
-      // 當偵測到骨架節點
       if (results.poseLandmarks) {
         const lm = results.poseLandmarks;
         const leftShoulder = lm[11];
@@ -470,13 +507,13 @@
           const pL = { x: leftShoulder.x * w, y: leftShoulder.y * h };
           const pR = { x: rightShoulder.x * w, y: rightShoulder.y * h };
 
-          // 計算連線向量與寬度
+          // 計算兩肩連線與傾斜角
           const dx = pR.x - pL.x;
           const dy = pR.y - pL.y;
           const shoulderWidth = Math.hypot(dx, dy);
           const angle = Math.atan2(dy, dx);
 
-          // 自動適配縮放
+          // 衣服依體型寬度等比縮放
           const targetWidth = shoulderWidth * 2.2;
           const currentItem = outfits[currentOutfitIdx];
 
@@ -485,11 +522,13 @@
             const aspectRatio = currentImg.height / currentImg.width;
             const targetHeight = targetWidth * aspectRatio;
 
+            // 兩肩中點做為中心旋轉基準點
             const centerX = (pL.x + pR.x) / 2;
             const centerY = (pL.y + pR.y) / 2;
-            const collarOffsetY = targetHeight * 0.15; // 領口對齊偏移
 
-            // 旋轉貼合
+            // 領口對齊垂直偏移量（下移貼齊肩膀與鎖骨線）
+            const collarOffsetY = targetHeight * collarOffsetPercent;
+
             canvasCtx.save();
             canvasCtx.translate(centerX, centerY);
             canvasCtx.rotate(angle);
@@ -508,7 +547,7 @@
     }
 
     // ==========================================
-    // 5. 初始化 MediaPipe 模型與攝影機
+    // 5. 初始化 MediaPipe 模型與視訊
     // ==========================================
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -531,7 +570,7 @@
     camera.start();
 
     // ==========================================
-    // 6. 快捷鍵與投影模式切換
+    // 6. 全螢幕投影切換與鍵盤快捷鍵
     // ==========================================
     document.getElementById('fs-btn').onclick = () => toggleFullScreen();
 
@@ -564,7 +603,6 @@
       }
     });
 
-    // 啟動圖庫載入
     loadOutfits();
   </script>
 </body>
