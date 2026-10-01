@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>AI 虛擬試衣互動投影系統 (Web 版)</title>
+  <!-- 引入 MediaPipe Pose 與相機輔助庫 (官方 CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: #121216;
+      color: #edf2f4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* 主視訊投影區 */
+    #stage-container {
+      position: relative;
+      flex: 1;
+      height: 100%;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      transform: scaleX(-1); /* 水平鏡像翻轉，如同照鏡子 */
+    }
+    /* 隱藏原生攝影機 video 元素，僅作取像緩衝 */
+    #webcam {
+      display: none;
+    }
+
+    /* 右側操作面板 */
+    #sidebar {
+      width: 280px;
+      height: 100%;
+      background-color: #20222a;
+      border-left: 1px solid #323544;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      z-index: 10;
+      transition: transform 0.3s ease;
+    }
+    .panel-hidden {
+      display: none !important;
+    }
+    h2 {
+      font-size: 1.25rem;
+      margin-bottom: 16px;
+      color: #f8f9fa;
+      font-weight: 600;
+    }
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+      overflow-y: auto;
+    }
+    .cloth-btn {
+      background-color: #3b4252;
+      color: #fff;
+      border: 2px solid transparent;
+      padding: 12px 14px;
+      font-size: 0.95rem;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s;
+    }
+    .cloth-btn:hover {
+      background-color: #4c566a;
+    }
+    .cloth-btn.active {
+      background-color: #ef233c;
+      border-color: #ff758f;
+      font-weight: bold;
+    }
+    .upload-box {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #323544;
+    }
+    .upload-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      background-color: #4361ee;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    .footer-tools {
+      margin-top: auto;
+      padding-top: 15px;
+    }
+    .fullscreen-btn {
+      width: 100%;
+      background-color: #3a86ff;
+      border: none;
+      color: #fff;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .tip-text {
+      font-size: 0.8rem;
+      color: #8d99ae;
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 左側投影主舞台 -->
+  <div id="stage-container">
+    <video id="webcam" playsinline></video>
+    <canvas id="output-canvas"></canvas>
+  </div>
+
+  <!-- 右側控制面板 -->
+  <div id="sidebar">
+    <h2>👗 服裝展示選擇</h2>
+    <div class="btn-group" id="btn-group">
+      <!-- 動態載入服飾按鈕 -->
+    </div>
+
+    <!-- 自訂上傳區塊 -->
+    <div class="upload-box">
+      <label class="upload-btn">
+        ➕ 上傳去背 PNG 衣服
+        <input type="file" id="cloth-uploader" accept="image/png" multiple style="display: none;">
+      </label>
+    </div>
+
+    <!-- 底部功能 -->
+    <div class="footer-tools">
+      <button class="fullscreen-btn" id="fs-btn">🖥️ 全螢幕投影 (F11)</button>
+      <div class="tip-text">
+        • 按 <b>F11</b> 切換純淨全螢幕投影<br>
+        • 按鍵盤 <b>左右鍵</b> 或 <b>數字鍵</b> 換衣<br>
+        • 支援多張透明 PNG 一鍵匯入
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const btnGroup = document.getElementById('btn-group');
+    const sidebar = document.getElementById('sidebar');
+
+    let currentOutfitIdx = 0;
+    const outfits = [];
+
+    // 1. 自動繪製預設服裝素材 (當使用者未上傳時使用)
+    function createDemoClothing(type) {
+      const cvs = document.createElement('canvas');
+      cvs.width = 600;
+      cvs.height = 700;
+      const ctx = cvs.getContext('2d');
+
+      if (type === 'jacket') {
+        ctx.fillStyle = "#1e3d59"; // 深藍
+        ctx.beginPath();
+        ctx.moveTo(150, 100); ctx.lineTo(450, 100);
+        ctx.lineTo(580, 320); ctx.lineTo(480, 360);
+        ctx.lineTo(450, 680); ctx.lineTo(150, 680);
+        ctx.lineTo(120, 360); ctx.lineTo(20, 320);
+        ctx.closePath();
+        ctx.fill();
+        // V 領
+        ctx.clearRect(240, 100, 120, 150);
+      } else if (type === 'tshirt') {
+        ctx.fillStyle = "#17b890"; // 活力綠
+        ctx.beginPath();
+        ctx.moveTo(160, 100); ctx.lineTo(440, 100);
+        ctx.lineTo(560, 260); ctx.lineTo(470, 310);
+        ctx.lineTo(430, 650); ctx.lineTo(170, 650);
+        ctx.lineTo(130, 310); ctx.lineTo(40, 260);
+        ctx.closePath();
+        ctx.fill();
+        // 圓領
+        ctx.clearRect(250, 80, 100, 50);
+      } else {
+        ctx.fillStyle = "#e056fd"; // 亮紫禮服
+        ctx.beginPath();
+        ctx.moveTo(190, 100); ctx.lineTo(410, 100);
+        ctx.lineTo(460, 280); ctx.lineTo(560, 680);
+        ctx.lineTo(40, 680); ctx.lineTo(140, 280);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      const img = new Image();
+      img.src = cvs.toDataURL();
+      return img;
+    }
+
+    // 初始化服飾清單
+    function initOutfits() {
+      outfits.push({ name: "商務西裝外套", img: createDemoClothing('jacket') });
+      outfits.push({ name: "休閒短袖T恤", img: createDemoClothing('tshirt') });
+      outfits.push({ name: "時尚優雅禮服", img: createDemoClothing('dress') });
+      renderButtons();
+    }
+
+    function renderButtons() {
+      btnGroup.innerHTML = '';
+      outfits.forEach((item, idx) => {
+        const btn = document.createElement('button');
+        btn.className = `cloth-btn ${idx === currentOutfitIdx ? 'active' : ''}`;
+        btn.innerText = `【${idx + 1}】 ${item.name}`;
+        btn.onclick = () => selectOutfit(idx);
+        btnGroup.appendChild(btn);
+      });
+    }
+
+    function selectOutfit(idx) {
+      currentOutfitIdx = idx;
+      renderButtons();
+    }
+
+    // 2. 自訂 PNG 圖檔上傳處理
+    document.getElementById('cloth-uploader').addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            const cleanName = file.name.replace(/\.[^/.]+$/, "");
+            outfits.push({ name: cleanName, img: img });
+            currentOutfitIdx = outfits.length - 1;
+            renderButtons();
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    // 3. 姿態估計與繪圖回調
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth || 1280;
+      canvasElement.height = videoElement.videoHeight || 720;
+      const w = canvasElement.width;
+      const h = canvasElement.height;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, w, h);
+      
+      // 繪製攝影機原始視訊
+      canvasCtx.drawImage(results.image, 0, 0, w, h);
+
+      // 當偵測到骨架時進行貼衣
+      if (results.poseLandmarks) {
+        const lm = results.poseLandmarks;
+        const leftShoulder = lm[11];
+        const rightShoulder = lm[12];
+
+        // 確保肩膀辨識度足夠
+        if (leftShoulder.visibility > 0.4 && rightShoulder.visibility > 0.4) {
+          const pL = { x: leftShoulder.x * w, y: leftShoulder.y * h };
+          const pR = { x: rightShoulder.x * w, y: rightShoulder.y * h };
+
+          // 計算兩肩寬度與傾斜度
+          const dx = pR.x - pL.x;
+          const dy = pR.y - pL.y;
+          const shoulderWidth = Math.hypot(dx, dy);
+          const angle = Math.atan2(dy, dx);
+
+          // 衣服縮放計算
+          const targetWidth = shoulderWidth * 2.2;
+          const currentImg = outfits[currentOutfitIdx].img;
+
+          if (currentImg && currentImg.width > 0) {
+            const aspectRatio = currentImg.height / currentImg.width;
+            const targetHeight = targetWidth * aspectRatio;
+
+            const centerX = (pL.x + pR.x) / 2;
+            const centerY = (pL.y + pR.y) / 2;
+
+            // 領口對齊基準點
+            const collarOffsetY = targetHeight * 0.15;
+
+            // Canvas 矩陣變換進行旋轉貼圖
+            canvasCtx.save();
+            canvasCtx.translate(centerX, centerY);
+            canvasCtx.rotate(angle);
+            canvasCtx.drawImage(
+              currentImg,
+              -targetWidth / 2,
+              -collarOffsetY,
+              targetWidth,
+              targetHeight
+            );
+            canvasCtx.restore();
+          }
+        }
+      }
+      canvasCtx.restore();
+    }
+
+    // 4. 初始化 MediaPipe Pose 模型
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    pose.onResults(onResults);
+
+    // 5. 啟動攝影機串流
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({ image: videoElement });
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+
+    // 6. 快捷鍵與投影全螢幕事件
+    document.getElementById('fs-btn').onclick = () => toggleFullScreen();
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+        sidebar.classList.add('panel-hidden');
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        sidebar.classList.remove('panel-hidden');
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        currentOutfitIdx = (currentOutfitIdx + 1) % outfits.length;
+        renderButtons();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        currentOutfitIdx = (currentOutfitIdx - 1 + outfits.length) % outfits.length;
+        renderButtons();
+      } else if (!isNaN(e.key) && parseInt(e.key) >= 1 && parseInt(e.key) <= outfits.length) {
+        selectOutfit(parseInt(e.key) - 1);
+      }
+    });
+
+    initOutfits();
+  </script>
+</body>
+</html>
